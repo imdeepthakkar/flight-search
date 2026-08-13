@@ -100,6 +100,55 @@ def get_token() -> str:
 
 # ── API calls ─────────────────────────────────────────────────────────────────
 
+# ── City/Airport name → IATA resolution ──────────────────────────────────────
+
+_iata_cache: dict[str, tuple[str, str]] = {}  # name → (IATA, full_name)
+
+def resolve_to_iata(query: str) -> tuple[str, str]:
+    """
+    Resolve a city name, airport name, or IATA code to a canonical IATA code.
+    Returns (iata_code, display_name).
+    If query is already a 3-letter IATA code, return it as-is.
+    Otherwise call the Travelpayouts autocomplete API.
+    Raises ValueError if nothing is found.
+    """
+    query = query.strip()
+    
+    # Already looks like an IATA code
+    if len(query) == 3 and query.isalpha():
+        return query.upper(), query.upper()
+        
+    key = query.lower()
+    if key in _iata_cache:
+        return _iata_cache[key]
+        
+    try:
+        r = requests.get(
+            "https://autocomplete.travelpayouts.com/places2",
+            params={"term": query, "locale": "en", "types[]": ["city", "airport"]},
+            timeout=8,
+        )
+        r.raise_for_status()
+        results = r.json()
+    except Exception as e:
+        raise ValueError(f"Could not look up '{query}': {e}")
+        
+    if not results:
+        raise ValueError(
+            f"No airport or city found for '{query}'. "
+            "Try a different spelling or use the 3-letter IATA code directly "
+            "(e.g. CPH for Copenhagen, LHR for London Heathrow)."
+        )
+        
+    best = results[0]
+    code = best["code"].upper()
+    name = best.get("name", code)
+    country = best.get("country_name", "")
+    display = f"{name}, {country}" if country else name
+    
+    _iata_cache[key] = (code, display)
+    return code, display
+
 def fetch_cheap(token: str, origin: str, destination: str,
                 depart_date: Optional[str], return_date: Optional[str],
                 currency: str) -> list[dict]:
@@ -396,15 +445,28 @@ def search(
         console.print("[bold red]  Provide --from and --to (or use -i for interactive).[/bold red]")
         raise typer.Exit(1)
 
-    from_airport = from_airport.strip().upper()
-    to_airport   = to_airport.strip().upper()
+    from_airport = from_airport.strip()
+    to_airport   = to_airport.strip()
 
     token = get_token()
 
+    with Live(
+        Spinner("dots", text="  Resolving locations…", style="cyan"),
+        refresh_per_second=10,
+        console=console,
+        transient=True,
+    ):
+        try:
+            from_code, from_name = resolve_to_iata(from_airport)
+            to_code,   to_name   = resolve_to_iata(to_airport)
+        except ValueError as e:
+            console.print(f"\n[bold red]  Location Error:[/bold red] {e}")
+            raise typer.Exit(1)
+
     console.print(
         Panel(
-            f"[bold]{from_airport}[/bold] [cyan]->[/cyan] [bold]{to_airport}[/bold]"
-            + (f" [cyan]->[/cyan] [bold]{from_airport}[/bold]" if trip == "round-trip" else "")
+            f"[bold]{from_code}[/bold] ({from_name}) [cyan]->[/cyan] [bold]{to_code}[/bold] ({to_name})"
+            + (f" [cyan]->[/cyan] [bold]{from_code}[/bold]" if trip == "round-trip" else "")
             + (f"   [dim]{date}[/dim]" if date else "  [dim]any month[/dim]"),
             border_style="cyan",
             padding=(0, 2),
@@ -421,8 +483,8 @@ def search(
         try:
             tickets = fetch_cheap(
                 token,
-                origin=from_airport,
-                destination=to_airport,
+                origin=from_code,
+                destination=to_code,
                 depart_date=date or None,
                 return_date=return_date if trip == "round-trip" else None,
                 currency=currency,
@@ -434,7 +496,7 @@ def search(
             console.print(f"\n[bold red]  Error:[/bold red] {e}")
             raise typer.Exit(1)
 
-    print_results_table(tickets, currency, from_airport, to_airport)
+    print_results_table(tickets, currency, from_code, to_code)
 
 
 @app.command()
@@ -458,10 +520,21 @@ def calendar(
 
     token = get_token()
     month = month or (datetime.date.today() + datetime.timedelta(days=30)).strftime("%Y-%m")
-    from_airport = from_airport.upper()
-    to_airport   = to_airport.upper()
+    
+    with Live(
+        Spinner("dots", text="  Resolving locations…", style="cyan"),
+        refresh_per_second=10,
+        console=console,
+        transient=True,
+    ):
+        try:
+            from_code, from_name = resolve_to_iata(from_airport)
+            to_code,   to_name   = resolve_to_iata(to_airport)
+        except ValueError as e:
+            console.print(f"\n[bold red]  Location Error:[/bold red] {e}")
+            raise typer.Exit(1)
 
-    console.print(f"  [dim]Loading calendar for [bold]{from_airport} -> {to_airport}[/bold] in [bold]{month}[/bold]...[/dim]\n")
+    console.print(f"  [dim]Loading calendar for [bold]{from_code} ({from_name}) -> {to_code} ({to_name})[/bold] in [bold]{month}[/bold]...[/dim]\n")
 
     with Live(
         Spinner("dots", text="  Fetching calendar…", style="cyan"),
@@ -470,12 +543,12 @@ def calendar(
         transient=True,
     ):
         try:
-            tickets = fetch_month_matrix(token, from_airport, to_airport, month, currency)
+            tickets = fetch_month_matrix(token, from_code, to_code, month, currency)
         except Exception as e:
             console.print(f"\n[bold red]  Error:[/bold red] {e}")
             raise typer.Exit(1)
 
-    print_calendar(tickets, currency, from_airport, to_airport, month)
+    print_calendar(tickets, currency, from_code, to_code, month)
 
 
 @app.command()

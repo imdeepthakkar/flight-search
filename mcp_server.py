@@ -28,6 +28,7 @@ from main import (
     get_token,
     SUPPORTED_CURRENCIES,
     DEFAULT_CURRENCY,
+    resolve_to_iata,
 )
 
 COMMON_AIRPORTS = [
@@ -55,53 +56,7 @@ COMMON_AIRPORTS = [
 
 # ── City/Airport name → IATA resolution ──────────────────────────────────────
 
-_iata_cache: dict[str, tuple[str, str]] = {}  # name → (IATA, full_name)
-
-
-def resolve_to_iata(query: str) -> tuple[str, str]:
-    """
-    Resolve a city name, airport name, or IATA code to a canonical IATA code.
-    Returns (iata_code, display_name).
-    If query is already a 3-letter IATA code, return it as-is.
-    Otherwise call the Travelpayouts autocomplete API.
-    Raises ValueError if nothing is found.
-    """
-    query = query.strip()
-
-    # Already looks like an IATA code
-    if len(query) == 3 and query.isalpha():
-        return query.upper(), query.upper()
-
-    key = query.lower()
-    if key in _iata_cache:
-        return _iata_cache[key]
-
-    try:
-        r = requests.get(
-            "https://autocomplete.travelpayouts.com/places2",
-            params={"term": query, "locale": "en", "types[]": ["city", "airport"]},
-            timeout=8,
-        )
-        r.raise_for_status()
-        results = r.json()
-    except Exception as e:
-        raise ValueError(f"Could not look up '{query}': {e}")
-
-    if not results:
-        raise ValueError(
-            f"No airport or city found for '{query}'. "
-            "Try a different spelling or use the 3-letter IATA code directly "
-            "(e.g. CPH for Copenhagen, LHR for London Heathrow)."
-        )
-
-    best   = results[0]
-    code   = best["code"].upper()
-    name   = best.get("name", code)
-    country = best.get("country_name", "")
-    display = f"{name}, {country}" if country else name
-
-    _iata_cache[key] = (code, display)
-    return code, display
+# Re-using resolve_to_iata from main.py
 
 # ── MCP Server ────────────────────────────────────────────────────────────────
 

@@ -108,11 +108,11 @@ TRAVELPAYOUTS_CURRENCY=DKK
 ### 🚀 Step 4 — Search your first flight!
 
 ```bash
-flight-search search --from CPH --to LHR --date 2026-09
+flight-search search --from Copenhagen --to London --date 2026-09
 ```
 
-> 🎯 Replace `CPH` with your origin airport and `LHR` with your destination.
-> Don't know the airport code? Run `flight-search airports` to look it up!
+> 🎯 Replace `Copenhagen` with your origin city and `London` with your destination.
+> You can also use 3-letter airport codes (like `CPH` or `LHR`) if you prefer!
 
 ---
 
@@ -122,16 +122,16 @@ flight-search search --from CPH --to LHR --date 2026-09
 
 ```bash
 # 🛫 Basic: cheapest flights for a month
-flight-search search --from CPH --to LHR --date 2026-09
+flight-search search --from Copenhagen --to London --date 2026-09
 
 # 🔄 Round-trip
 flight-search search --from CPH --to LHR --date 2026-09 --return 2026-09 --trip round-trip
 
 # 💱 Different currency
-flight-search search --from JFK --to CDG --date 2026-10 --currency EUR
+flight-search search --from "New York" --to Paris --date 2026-10 --currency EUR
 
 # 🌐 Any month (all cached results)
-flight-search search --from CPH --to LHR
+flight-search search --from Copenhagen --to LHR
 
 # 🧙 Interactive mode — answers questions one by one
 flight-search search -i
@@ -141,8 +141,8 @@ flight-search search -i
 
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
-| `--from` | `-f` | 🛫 Origin airport code (e.g. `CPH`) | required |
-| `--to` | `-t` | 🛬 Destination airport code (e.g. `LHR`) | required |
+| `--from` | `-f` | 🛫 Origin city or airport (e.g. `Copenhagen`, `CPH`) | required |
+| `--to` | `-t` | 🛬 Destination city or airport (e.g. `London`, `LHR`) | required |
 | `--date` | `-d` | 📅 Month to search `YYYY-MM` | any month |
 | `--return` | `-r` | 🔄 Return month for round-trip `YYYY-MM` | — |
 | `--trip` | | 🎫 `one-way` or `round-trip` | `one-way` |
@@ -155,7 +155,7 @@ flight-search search -i
 
 ```bash
 # 🗓️ See every day's cheapest price in September
-flight-search calendar CPH LHR --month 2026-09
+flight-search calendar Copenhagen London --month 2026-09
 
 # ⚡ Default: shows next month automatically
 flight-search calendar CPH LHR
@@ -406,7 +406,7 @@ You can also override per-command with `--currency EUR`.
 Yes! Works on Windows, Mac, and Linux. On Windows, if `flight-search` isn't recognized after install, use:
 
 ```bash
-python main.py search --from CPH --to LHR --date 2026-09
+python main.py search --from Copenhagen --to London --date 2026-09
 ```
 
 Or activate your virtual environment first:
