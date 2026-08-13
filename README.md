@@ -14,7 +14,7 @@
 <br/>
 
 ```
-✈  CPH → LHR   [2026-09]
+✈  Copenhagen (CPH) → London (LON)   [2026-09]
 
 1.  DKK 929   SK   Oct 01 2026   Nonstop    3h 50m   ← cheapest 🏆
 2.  DKK 948   SK   Sep 30 2026   Nonstop    3h 50m
@@ -22,6 +22,9 @@
 4.  DKK 965   SK   Sep 23 2026   Nonstop    3h 50m
 ```
 _This is what it looks like in your terminal_ 👆
+
+> 🧠 **Speak naturally** — type `Copenhagen` instead of `CPH`, `London` instead of `LHR`.
+> City names are resolved to IATA codes automatically. No lookup needed!
 
 </div>
 
@@ -54,9 +57,9 @@ _This is what it looks like in your terminal_ 👆
 
 ### 🪙 Step 1 — Grab your FREE API token
 
-1. 🌐 Visit **[travelpayouts.com](https://www.travelpayouts.com)** and sign up (free, 30 seconds)
-2. 👤 Go to your **Profile → API token** tab
-3. 📋 Copy your token — it's already generated, waiting for you!
+1. 🌐 Sign up at **[travelpayouts.com](https://www.travelpayouts.com)** *(free, 30 seconds)*
+2. 🔑 Go directly to your token page: **[travelpayouts.com/profile/api](https://www.travelpayouts.com/profile/api)**
+3. 📋 Copy your token — it's auto-generated, no application needed!
 
 > 💡 **No credit card. No approval. No waiting.** The token is yours the moment you register.
 
@@ -92,7 +95,7 @@ cp .env.example .env
 Open `.env` and fill it in:
 
 ```env
-# 🔑 Required — paste your token from travelpayouts.com
+# 🔑 Required — get your free token at: https://www.travelpayouts.com/profile/api
 TRAVELPAYOUTS_TOKEN=your_token_here
 
 # 💱 Optional — your preferred currency (default: USD)
@@ -287,7 +290,7 @@ flight-search-mcp
 All config lives in your `.env` file (copied from `.env.example`):
 
 ```env
-# 🔑 REQUIRED — Get your free token at travelpayouts.com
+# 🔑 REQUIRED — get your free token here: https://www.travelpayouts.com/profile/api
 TRAVELPAYOUTS_TOKEN=your_token_here
 
 # 💱 OPTIONAL — Default currency for all searches
