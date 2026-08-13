@@ -3,6 +3,7 @@
 flight-search MCP Server
 Exposes flight search tools via the Model Context Protocol (MCP).
 Works with AGY, Claude Code, Cursor, Windsurf, and any MCP-compatible client.
+Supports natural language city names — no need to know IATA codes!
 
 Install: pip install -e .
 Run:     flight-search-mcp
@@ -12,6 +13,7 @@ import os
 import sys
 import asyncio
 import datetime
+import requests
 
 from dotenv import load_dotenv
 from mcp.server.mcpserver.server import MCPServer
@@ -51,6 +53,56 @@ COMMON_AIRPORTS = [
     ("CPT", "Cape Town International",             "Cape Town, South Africa"),
 ]
 
+# ── City/Airport name → IATA resolution ──────────────────────────────────────
+
+_iata_cache: dict[str, tuple[str, str]] = {}  # name → (IATA, full_name)
+
+
+def resolve_to_iata(query: str) -> tuple[str, str]:
+    """
+    Resolve a city name, airport name, or IATA code to a canonical IATA code.
+    Returns (iata_code, display_name).
+    If query is already a 3-letter IATA code, return it as-is.
+    Otherwise call the Travelpayouts autocomplete API.
+    Raises ValueError if nothing is found.
+    """
+    query = query.strip()
+
+    # Already looks like an IATA code
+    if len(query) == 3 and query.isalpha():
+        return query.upper(), query.upper()
+
+    key = query.lower()
+    if key in _iata_cache:
+        return _iata_cache[key]
+
+    try:
+        r = requests.get(
+            "https://autocomplete.travelpayouts.com/places2",
+            params={"term": query, "locale": "en", "types[]": ["city", "airport"]},
+            timeout=8,
+        )
+        r.raise_for_status()
+        results = r.json()
+    except Exception as e:
+        raise ValueError(f"Could not look up '{query}': {e}")
+
+    if not results:
+        raise ValueError(
+            f"No airport or city found for '{query}'. "
+            "Try a different spelling or use the 3-letter IATA code directly "
+            "(e.g. CPH for Copenhagen, LHR for London Heathrow)."
+        )
+
+    best   = results[0]
+    code   = best["code"].upper()
+    name   = best.get("name", code)
+    country = best.get("country_name", "")
+    display = f"{name}, {country}" if country else name
+
+    _iata_cache[key] = (code, display)
+    return code, display
+
 # ── MCP Server ────────────────────────────────────────────────────────────────
 
 mcp = MCPServer(
@@ -72,22 +124,32 @@ def search_flights(
     Returns cached prices from the last 48 hours.
     Use for: 'find flights', 'cheap flights from X to Y', 'flight prices', 'search flights'.
 
+    Accepts city names OR IATA codes — e.g. 'Copenhagen' or 'CPH', 'London' or 'LHR'.
+
     Args:
-        origin: Origin airport IATA code (e.g. CPH, JFK, LHR)
-        destination: Destination airport IATA code (e.g. LHR, CDG, DXB)
+        origin: Origin city name or IATA code (e.g. 'Copenhagen', 'CPH', 'New York', 'JFK')
+        destination: Destination city name or IATA code (e.g. 'London', 'LHR', 'Paris', 'CDG')
         month: Travel month YYYY-MM (e.g. 2026-09). Leave blank for any month.
         return_month: Return month YYYY-MM for round-trip. Leave blank for one-way.
         currency: ISO-4217 currency code (e.g. USD, EUR, DKK). Defaults to configured default.
     """
     token    = get_token()
-    origin   = origin.strip().upper()
-    dest     = destination.strip().upper()
     currency = (currency.strip().upper() or DEFAULT_CURRENCY)
+
+    try:
+        origin_code, origin_name = resolve_to_iata(origin)
+        dest_code,   dest_name   = resolve_to_iata(destination)
+    except ValueError as e:
+        return f"❌ {e}"
+
+    resolved_note = ""
+    if origin_code != origin.strip().upper() or dest_code != destination.strip().upper():
+        resolved_note = f"📍 Resolved: {origin} → {origin_code} ({origin_name}), {destination} → {dest_code} ({dest_name})\n\n"
 
     tickets = fetch_cheap(
         token,
-        origin=origin,
-        destination=dest,
+        origin=origin_code,
+        destination=dest_code,
         depart_date=month or None,
         return_date=return_month or None,
         currency=currency,
@@ -95,14 +157,15 @@ def search_flights(
 
     if not tickets:
         return (
-            f"No flights found for {origin} → {dest}"
+            resolved_note +
+            f"No flights found for {origin_code} → {dest_code}"
             + (f" in {month}" if month else "") + ".\n"
             "Try a different month or leave month blank for any-month results."
         )
 
     tickets = sorted(tickets, key=lambda t: float(t.get("price", 0) or t.get("value", 0)))
 
-    lines = [f"✈  {origin} → {dest}" + (f"  [{month}]" if month else "") + "\n"]
+    lines = [resolved_note + f"✈  {origin_code} ({origin_name}) → {dest_code} ({dest_name})" + (f"  [{month}]" if month else "") + "\n"]
     for i, t in enumerate(tickets, 1):
         price     = t.get("price") or t.get("value", "?")
         airline   = t.get("airline", "—")
@@ -136,27 +199,37 @@ def calendar_view(
     Great for finding the cheapest day to fly.
     Use for: 'cheapest day to fly', 'calendar view', 'price per day', 'when is cheapest flight'.
 
+    Accepts city names OR IATA codes — e.g. 'Copenhagen' or 'CPH', 'London' or 'LHR'.
+
     Args:
-        origin: Origin airport IATA code (e.g. CPH)
-        destination: Destination airport IATA code (e.g. LHR)
+        origin: Origin city name or IATA code (e.g. 'Copenhagen', 'CPH')
+        destination: Destination city name or IATA code (e.g. 'London', 'LHR')
         month: Month YYYY-MM (e.g. 2026-09). Defaults to next month.
         currency: ISO-4217 currency code. Defaults to configured default.
     """
     token    = get_token()
-    origin   = origin.strip().upper()
-    dest     = destination.strip().upper()
     currency = (currency.strip().upper() or DEFAULT_CURRENCY)
     month    = month or (datetime.date.today() + datetime.timedelta(days=30)).strftime("%Y-%m")
 
-    tickets = fetch_month_matrix(token, origin, dest, month, currency)
+    try:
+        origin_code, origin_name = resolve_to_iata(origin)
+        dest_code,   dest_name   = resolve_to_iata(destination)
+    except ValueError as e:
+        return f"❌ {e}"
+
+    resolved_note = ""
+    if origin_code != origin.strip().upper() or dest_code != destination.strip().upper():
+        resolved_note = f"📍 Resolved: {origin} → {origin_code} ({origin_name}), {destination} → {dest_code} ({dest_name})\n\n"
+
+    tickets = fetch_month_matrix(token, origin_code, dest_code, month, currency)
 
     if not tickets:
-        return f"No calendar data found for {origin} → {dest} in {month}."
+        return resolved_note + f"No calendar data found for {origin_code} → {dest_code} in {month}."
 
     tickets   = sorted(tickets, key=lambda t: t.get("departure_at", ""))
     min_price = min(float(t.get("price", 9999)) for t in tickets)
 
-    lines = [f"📅 {origin} → {dest}  [{month}]\n"]
+    lines = [resolved_note + f"📅 {origin_code} ({origin_name}) → {dest_code} ({dest_name})  [{month}]\n"]
     for t in tickets:
         price     = float(t.get("price", 0))
         airline   = t.get("airline", "—")
@@ -168,6 +241,22 @@ def calendar_view(
 
     lines.append(f"\nCheapest: {currency} {min_price:,.0f}  |  {len(tickets)} dates found.")
     return "\n".join(lines)
+
+
+@mcp.tool()
+def resolve_location(query: str) -> str:
+    """
+    Resolve any city name, airport name, or partial name to its IATA code.
+    Use this when unsure of a code before calling search_flights or calendar_view.
+
+    Args:
+        query: City or airport name to look up (e.g. 'Copenhagen', 'Heathrow', 'New York')
+    """
+    try:
+        code, display = resolve_to_iata(query)
+        return f"✅ '{query}' → {code} ({display})"
+    except ValueError as e:
+        return f"❌ {e}"
 
 
 @mcp.tool()

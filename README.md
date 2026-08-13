@@ -190,20 +190,25 @@ The [Model Context Protocol (MCP)](https://modelcontextprotocol.io) lets your AI
 
 Just say something like:
 
-> 💬 _"Find the cheapest nonstop flight from Copenhagen to London in October"_
-> 💬 _"What's the cheapest day to fly CPH → Paris in September?"_
-> 💬 _"Show me flights under 1000 DKK from CPH to Amsterdam"_
+> 💬 _"Find the cheapest nonstop flight from **Copenhagen** to **London** in October"_
+> 💬 _"What's the cheapest day to fly from **New York** to **Paris** in September?"_
+> 💬 _"Show me flights under 1000 DKK from **Copenhagen** to **Amsterdam"_
+> 💬 _"Search flights from **Heathrow** to **Dubai** next month"_
+
+> 🧠 **No IATA codes needed!** Just type the city or airport name — the tool resolves it automatically.
+> You can still use codes like `CPH` or `LHR` if you prefer.
 
 ...and your AI calls the right tool automatically! 🪄
 
 ### 🛠️ Available MCP Tools
 
-| Tool | 🎯 Triggered by |
+| Tool | 🎯 What it does |
 |------|----------------|
-| 🔍 `search_flights` | "find flights", "cheap flights from X to Y", "flight prices" |
-| 📅 `calendar_view` | "cheapest day to fly", "price calendar", "when is cheapest" |
-| 🗺️ `list_airports` | "airport code for X", "what's the IATA for Copenhagen" |
-| 💱 `list_currencies` | "what currencies are supported", "change currency" |
+| 🔍 `search_flights` | Search cheapest fares — accepts **city names or IATA codes** |
+| 📅 `calendar_view` | Cheapest price per day — accepts **city names or IATA codes** |
+| 📍 `resolve_location` | Resolve any city/airport name → IATA code |
+| 🗺️ `list_airports` | Browse common airport codes |
+| 💱 `list_currencies` | List supported currency codes |
 
 ---
 
