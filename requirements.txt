@@ -1,0 +1,6 @@
+requests
+typer
+rich
+python-dotenv
+typing_extensions
+mcp

@@ -1,0 +1,26 @@
+[project]
+name = "flight-search"
+version = "0.2.0"
+description = "Terminal flight search CLI + AI agent powered by Gemini"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "requests",
+    "typer",
+    "rich",
+    "python-dotenv",
+    "typing_extensions",
+    "mcp",
+]
+
+[project.scripts]
+flight-search     = "main:app"
+flight-search-mcp = "mcp_server:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["main", "mcp_server"]
+

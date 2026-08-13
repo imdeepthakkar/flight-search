@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "flight-search": {
+      "command": "flight-search-mcp",
+      "env": {
+        "TRAVELPAYOUTS_TOKEN": "${TRAVELPAYOUTS_TOKEN}",
+        "TRAVELPAYOUTS_CURRENCY": "${TRAVELPAYOUTS_CURRENCY}"
+      }
+    }
+  }
+}
