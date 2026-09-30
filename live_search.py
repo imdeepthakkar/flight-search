@@ -234,6 +234,38 @@ def safe_parse_google_flights_js(
     return results
 
 
+COMMON_AIRLINE_CODES = {
+    "emirates": "EK",
+    "qatar": "QR",
+    "qatar airways": "QR",
+    "lufthansa": "LH",
+    "turkish": "TK",
+    "turkish airlines": "TK",
+    "sas": "SK",
+    "scandinavian airlines": "SK",
+    "air france": "AF",
+    "klm": "KL",
+    "british airways": "BA",
+    "etihad": "EY",
+    "etihad airways": "EY",
+    "indigo": "6E",
+    "air india": "AI",
+    "finnair": "AY",
+    "swiss": "LX",
+    "austrian": "OS",
+}
+
+def resolve_airline_code(airline: Optional[str]) -> Optional[str]:
+    if not airline:
+        return None
+    cleaned = airline.strip().lower()
+    if cleaned in COMMON_AIRLINE_CODES:
+        return COMMON_AIRLINE_CODES[cleaned]
+    if len(airline.strip()) == 2 and airline.strip().isalpha():
+        return airline.strip().upper()
+    return None
+
+
 class GoogleFlightsProvider:
     CONSENT_COOKIE = "SOCS=CAISHAgBEhJnd3NfMjAyNDA5MjQtMF9SQzIaAmVuIAEaBgiA_L22Bg"
 
@@ -300,6 +332,7 @@ class GoogleFlightsProvider:
         return_date: Optional[str] = None,
         trip_type: str = "one-way",
         currency: str = "DKK",
+        airline: Optional[str] = None,
     ) -> list[UnifiedFlight]:
         from fast_flights import FlightQuery, create_filter
         from selectolax.lexbor import LexborHTMLParser
@@ -310,9 +343,24 @@ class GoogleFlightsProvider:
         if return_date and len(return_date) == 7:
             return_date = f"{return_date}-15"
 
-        flight_queries = [FlightQuery(date=depart_date, from_airport=origin, to_airport=destination)]
+        airline_code = resolve_airline_code(airline)
+        flight_queries = [
+            FlightQuery(
+                date=depart_date,
+                from_airport=origin,
+                to_airport=destination,
+                airlines=[airline_code] if airline_code else None,
+            )
+        ]
         if trip_type == "round-trip" and return_date:
-            flight_queries.append(FlightQuery(date=return_date, from_airport=destination, to_airport=origin))
+            flight_queries.append(
+                FlightQuery(
+                    date=return_date,
+                    from_airport=destination,
+                    to_airport=origin,
+                    airlines=[airline_code] if airline_code else None,
+                )
+            )
 
         q = create_filter(
             flights=flight_queries,
@@ -340,8 +388,8 @@ class GoogleFlightsProvider:
         # If round-trip search yielded no bundled fares, search outbound & return one-way legs and combine them
         if trip_type == "round-trip" and return_date:
             try:
-                outbound = self.search(origin, destination, depart_date, None, "one-way", currency)
-                inbound = self.search(destination, origin, return_date, None, "one-way", currency)
+                outbound = self.search(origin, destination, depart_date, None, "one-way", currency, airline=airline)
+                inbound = self.search(destination, origin, return_date, None, "one-way", currency, airline=airline)
                 if outbound and inbound:
                     combined = []
                     for out in outbound:
@@ -471,6 +519,7 @@ def search_flights(
     trip_type: str = "one-way",
     currency: str = "DKK",
     source: str = "auto",
+    airline: Optional[str] = None,
 ) -> tuple[list[UnifiedFlight], str]:
     """
     Search flights with live search priority and automatic fallback to Travelpayouts cache.
@@ -498,7 +547,7 @@ def search_flights(
     if depart_date:
         try:
             gf = GoogleFlightsProvider()
-            results = gf.search(origin, destination, depart_date, return_date, trip_type, currency)
+            results = gf.search(origin, destination, depart_date, return_date, trip_type, currency, airline=airline)
             if results:
                 return results, "Google Flights (Live)"
         except Exception:

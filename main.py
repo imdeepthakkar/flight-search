@@ -490,6 +490,8 @@ def search(
         help=f"Currency code (USD, EUR, GBP, DKK…). Default: {DEFAULT_CURRENCY} (set TRAVELPAYOUTS_CURRENCY in .env to change)."),
     source:       str           = typer.Option("auto", "--source", "-s",
         help="auto | live | cached"),
+    airline:      Optional[str] = typer.Option(None, "--airline", "-a",
+        help="Filter by airline (e.g. EK, Emirates, LH, QR)"),
     interactive:  bool          = typer.Option(False, "--interactive", "-i",
         is_flag=True, help="Guided prompt mode"),
 ):
@@ -582,6 +584,7 @@ def search(
                 trip_type=trip,
                 currency=currency,
                 source=source,
+                airline=airline,
             )
         except requests.HTTPError as e:
             console.print(f"\n[bold red]  HTTP error:[/bold red] {e}")

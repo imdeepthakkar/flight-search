@@ -50,10 +50,51 @@ class TestCLI(unittest.TestCase):
             trip_type="one-way",
             currency="DKK",
             source="live",
+            airline=None,
         )
         self.assertIn("LIVE FARES (Google Flights)", result.output)
         self.assertIn("SAS", result.output)
         self.assertIn("3,200", result.output)
+
+    @patch("main.search_flights")
+    @patch("main.resolve_to_iata")
+    def test_search_cli_with_airline_option(self, mock_resolve, mock_search):
+        mock_resolve.side_effect = lambda code: (code, f"{code} Airport")
+        flight = UnifiedFlight(
+            airline="Emirates",
+            flight_number="",
+            price=4703.0,
+            currency="DKK",
+            depart_at="2026-10-29 14:45",
+            return_at=None,
+            duration="9h 50m",
+            stops=1,
+            layovers=["DXB"],
+            source="Google Flights (Live)",
+        )
+        mock_search.return_value = ([flight], "Google Flights (Live)")
+
+        result = runner.invoke(app, [
+            "search",
+            "--from", "CPH",
+            "--to", "HYD",
+            "--depart", "2026-10-29",
+            "--airline", "Emirates",
+        ])
+
+        self.assertEqual(result.exit_code, 0)
+        mock_search.assert_called_once_with(
+            origin="CPH",
+            destination="HYD",
+            depart_date="2026-10-29",
+            return_date=None,
+            trip_type="one-way",
+            currency="DKK",
+            source="auto",
+            airline="Emirates",
+        )
+        self.assertIn("Emirates", result.output)
+        self.assertIn("4,703", result.output)
 
     @patch("main.search_flights")
     @patch("main.resolve_to_iata")
