@@ -3,6 +3,8 @@ live_search.py -- Unified flight search engine supporting Google Flights,
 Amadeus GDS, and Travelpayouts cached fallback.
 """
 
+import os
+import re
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -182,4 +184,99 @@ class GoogleFlightsProvider:
                     return []
                 
         return []
+
+
+class AmadeusProvider:
+    def __init__(self, client_id: Optional[str] = None, client_secret: Optional[str] = None):
+        self.client_id = client_id or os.getenv("AMADEUS_CLIENT_ID")
+        self.client_secret = client_secret or os.getenv("AMADEUS_CLIENT_SECRET")
+
+    def is_configured(self) -> bool:
+        return bool(self.client_id and self.client_secret)
+
+    def _convert_offer(self, offer: dict) -> UnifiedFlight:
+        price_info = offer.get("price", {})
+        price = float(price_info.get("grandTotal", 0.0))
+        currency = price_info.get("currency", "DKK")
+        
+        itineraries = offer.get("itineraries", [])
+        if not itineraries:
+            raise ValueError("No itinerary in offer")
+            
+        outbound = itineraries[0]
+        segments = outbound.get("segments", [])
+        if not segments:
+            raise ValueError("No segments in outbound itinerary")
+            
+        airline = segments[0].get("carrierCode", "Unknown")
+        flight_no = f"{airline}{segments[0].get('number', '')}"
+        
+        dep_at = segments[0].get("departure", {}).get("at", "")
+        depart_str = dep_at[:16].replace("T", " ") if dep_at else ""
+        
+        # Duration ISO 8601 (PT14H30M)
+        dur_raw = outbound.get("duration", "")
+        h_match = re.search(r"(\d+)H", dur_raw)
+        m_match = re.search(r"(\d+)M", dur_raw)
+        h = int(h_match.group(1)) if h_match else 0
+        m = int(m_match.group(1)) if m_match else 0
+        dur_str = f"{h}h {m:02d}m" if (h or m) else dur_raw
+        
+        stops = max(0, len(segments) - 1)
+        layovers = [s.get("departure", {}).get("iataCode", "") for s in segments[1:]]
+        
+        return_str = None
+        if len(itineraries) > 1:
+            ret_segments = itineraries[1].get("segments", [])
+            if ret_segments:
+                ret_at = ret_segments[0].get("departure", {}).get("at", "")
+                return_str = ret_at[:16].replace("T", " ") if ret_at else None
+
+        return UnifiedFlight(
+            airline=airline,
+            flight_number=flight_no,
+            price=price,
+            currency=currency,
+            depart_at=depart_str,
+            return_at=return_str,
+            duration=dur_str,
+            stops=stops,
+            layovers=layovers,
+            source="Amadeus (Live)",
+        )
+
+    def search(
+        self,
+        origin: str,
+        destination: str,
+        depart_date: str,
+        return_date: Optional[str] = None,
+        currency: str = "DKK",
+    ) -> list[UnifiedFlight]:
+        from amadeus import Client, ResponseError
+        amadeus = Client(client_id=self.client_id, client_secret=self.client_secret)
+        
+        # Format date to YYYY-MM-DD
+        if len(depart_date) == 7:
+            depart_date = f"{depart_date}-15"
+            
+        kwargs = {
+            "originLocationCode": origin,
+            "destinationLocationCode": destination,
+            "departureDate": depart_date,
+            "adults": 1,
+            "currencyCode": currency,
+            "max": 15,
+        }
+        if return_date:
+            if len(return_date) == 7:
+                return_date = f"{return_date}-15"
+            kwargs["returnDate"] = return_date
+            
+        try:
+            response = amadeus.shopping.flight_offers_search.get(**kwargs)
+            return [self._convert_offer(o) for o in response.data]
+        except Exception as e:
+            raise RuntimeError(f"Amadeus search failed: {e}")
+
 

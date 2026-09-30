@@ -1,6 +1,6 @@
 import unittest
 from unittest.mock import patch, MagicMock
-from live_search import UnifiedFlight, TravelpayoutsProvider, GoogleFlightsProvider
+from live_search import UnifiedFlight, TravelpayoutsProvider, GoogleFlightsProvider, AmadeusProvider
 
 class TestTravelpayoutsAdapter(unittest.TestCase):
     def test_unified_flight_fields(self):
@@ -146,6 +146,137 @@ class TestGoogleFlightsProvider(unittest.TestCase):
         self.assertEqual(flights[0].depart_at, "2026-01-01 00:00")
 
 
+class TestAmadeusProvider(unittest.TestCase):
+    def test_not_configured_when_no_keys(self):
+        provider = AmadeusProvider(client_id=None, client_secret=None)
+        self.assertFalse(provider.is_configured())
+
+    def test_configured_when_keys_present(self):
+        provider = AmadeusProvider(client_id="key123", client_secret="secret456")
+        self.assertTrue(provider.is_configured())
+
+    def test_convert_amadeus_offer(self):
+        raw_offer = {
+            "price": {"grandTotal": "4200.50", "currency": "DKK"},
+            "itineraries": [
+                {
+                    "duration": "PT14H30M",
+                    "segments": [
+                        {
+                            "carrierCode": "LH",
+                            "number": "820",
+                            "departure": {"iataCode": "CPH", "at": "2026-12-16T06:00:00"},
+                            "arrival": {"iataCode": "FRA", "at": "2026-12-16T07:30:00"},
+                        },
+                        {
+                            "carrierCode": "LH",
+                            "number": "756",
+                            "departure": {"iataCode": "FRA", "at": "2026-12-16T12:00:00"},
+                            "arrival": {"iataCode": "BOM", "at": "2026-12-17T01:00:00"},
+                        }
+                    ]
+                }
+            ]
+        }
+        provider = AmadeusProvider(client_id="k", client_secret="s")
+        flight = provider._convert_offer(raw_offer)
+        self.assertEqual(flight.airline, "LH")
+        self.assertEqual(flight.price, 4200.50)
+        self.assertEqual(flight.stops, 1)
+        self.assertEqual(flight.layovers, ["FRA"])
+        self.assertEqual(flight.source, "Amadeus (Live)")
+
+    @patch("amadeus.Client")
+    def test_search_calls_flight_offers_search(self, mock_client_cls):
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_response = MagicMock()
+        mock_response.data = [
+            {
+                "price": {"grandTotal": "3000.0", "currency": "DKK"},
+                "itineraries": [
+                    {
+                        "duration": "PT2H00M",
+                        "segments": [
+                            {
+                                "carrierCode": "SK",
+                                "number": "100",
+                                "departure": {"iataCode": "CPH", "at": "2026-12-01T10:00:00"},
+                                "arrival": {"iataCode": "LHR", "at": "2026-12-01T11:00:00"},
+                            }
+                        ],
+                    }
+                ],
+            }
+        ]
+        mock_client.shopping.flight_offers_search.get.return_value = mock_response
+
+        provider = AmadeusProvider(client_id="id", client_secret="sec")
+        results = provider.search("CPH", "LHR", "2026-12", return_date="2026-12", currency="DKK")
+
+        mock_client.shopping.flight_offers_search.get.assert_called_once_with(
+            originLocationCode="CPH",
+            destinationLocationCode="LHR",
+            departureDate="2026-12-15",
+            adults=1,
+            currencyCode="DKK",
+            max=15,
+            returnDate="2026-12-15",
+        )
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].airline, "SK")
+        self.assertEqual(results[0].flight_number, "SK100")
+        self.assertEqual(results[0].price, 3000.0)
+
+    @patch("amadeus.Client")
+    def test_search_raises_runtime_error_on_failure(self, mock_client_cls):
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_client.shopping.flight_offers_search.get.side_effect = Exception("API rate limit")
+
+        provider = AmadeusProvider(client_id="id", client_secret="sec")
+        with self.assertRaises(RuntimeError) as ctx:
+            provider.search("CPH", "LHR", "2026-12-01")
+        self.assertIn("Amadeus search failed: API rate limit", str(ctx.exception))
+
+    def test_convert_round_trip_offer(self):
+        raw_offer = {
+            "price": {"grandTotal": "5000", "currency": "EUR"},
+            "itineraries": [
+                {
+                    "duration": "PT8H00M",
+                    "segments": [
+                        {
+                            "carrierCode": "BA",
+                            "number": "123",
+                            "departure": {"iataCode": "CPH", "at": "2026-12-01T08:00:00"},
+                            "arrival": {"iataCode": "LHR", "at": "2026-12-01T09:00:00"},
+                        }
+                    ],
+                },
+                {
+                    "duration": "PT8H00M",
+                    "segments": [
+                        {
+                            "carrierCode": "BA",
+                            "number": "124",
+                            "departure": {"iataCode": "LHR", "at": "2026-12-10T14:00:00"},
+                            "arrival": {"iataCode": "CPH", "at": "2026-12-10T17:00:00"},
+                        }
+                    ],
+                },
+            ],
+        }
+        provider = AmadeusProvider(client_id="k", client_secret="s")
+        flight = provider._convert_offer(raw_offer)
+        self.assertEqual(flight.airline, "BA")
+        self.assertEqual(flight.currency, "EUR")
+        self.assertEqual(flight.depart_at, "2026-12-01 08:00")
+        self.assertEqual(flight.return_at, "2026-12-10 14:00")
+
+
 if __name__ == "__main__":
     unittest.main()
+
+
 
