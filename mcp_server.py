@@ -24,14 +24,13 @@ load_dotenv()
 # ── Re-use API functions from main.py & live_search ────────────────────────────
 sys.path.insert(0, os.path.dirname(__file__))
 from main import (
-    fetch_cheap,
     fetch_month_matrix,
     get_token,
     SUPPORTED_CURRENCIES,
     DEFAULT_CURRENCY,
     resolve_to_iata,
 )
-from live_search import search_flights as run_live_search, UnifiedFlight
+from live_search import search_flights as run_live_search
 
 COMMON_AIRPORTS = [
     ("CPH", "Copenhagen Airport",                 "Copenhagen, Denmark"),
@@ -97,9 +96,9 @@ def search_flights(
         trip_type: 'one-way', 'round-trip', or 'auto' (inferred from return_date).
         source: 'auto' (live with cached fallback), 'live' (only live fares), or 'cached' (Travelpayouts 48h cache).
     """
-    currency = (currency.strip().upper() or DEFAULT_CURRENCY)
-    depart = depart_date.strip() or month.strip() or None
-    ret = return_date.strip() or return_month.strip() or None
+    currency = ((currency or "").strip().upper() or DEFAULT_CURRENCY)
+    depart = (depart_date or "").strip() or (month or "").strip() or None
+    ret = (return_date or "").strip() or (return_month or "").strip() or None
 
     if trip_type == "auto":
         trip_type = "round-trip" if ret else "one-way"
