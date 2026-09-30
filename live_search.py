@@ -327,14 +327,45 @@ class GoogleFlightsProvider:
         for script in parser.css("script"):
             if script.attributes.get("class") == "ds:1":
                 try:
-                    return safe_parse_google_flights_js(
+                    res = safe_parse_google_flights_js(
                         script.text(),
                         currency=currency,
                         return_date=return_date if trip_type == "round-trip" else None,
                     )
+                    if res:
+                        return res
                 except Exception:
-                    return []
-                
+                    pass
+
+        # If round-trip search yielded no bundled fares, search outbound & return one-way legs and combine them
+        if trip_type == "round-trip" and return_date:
+            try:
+                outbound = self.search(origin, destination, depart_date, None, "one-way", currency)
+                inbound = self.search(destination, origin, return_date, None, "one-way", currency)
+                if outbound and inbound:
+                    combined = []
+                    for out in outbound:
+                        for ret in inbound:
+                            airline = out.airline if out.airline == ret.airline else f"{out.airline} / {ret.airline}"
+                            combined.append(
+                                UnifiedFlight(
+                                    airline=airline,
+                                    flight_number="",
+                                    price=out.price + ret.price,
+                                    currency=currency,
+                                    depart_at=out.depart_at,
+                                    return_at=ret.depart_at or return_date,
+                                    duration=f"{out.duration} + {ret.duration}",
+                                    stops=max(out.stops, ret.stops),
+                                    layovers=out.layovers,
+                                    source="Google Flights (Live)",
+                                )
+                            )
+                    combined.sort(key=lambda f: f.price)
+                    return combined[:15]
+            except Exception:
+                pass
+
         return []
 
 
