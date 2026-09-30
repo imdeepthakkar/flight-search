@@ -4,8 +4,7 @@ Amadeus GDS, and Travelpayouts cached fallback.
 """
 
 from dataclasses import dataclass, field
-from typing import Optional, List
-import datetime
+from typing import Optional
 
 @dataclass
 class UnifiedFlight:
@@ -46,7 +45,7 @@ class TravelpayoutsProvider:
         else:
             duration_str = "—"
             
-        stops = int(ticket.get("_stops_key", 0))
+        stops = int(ticket.get("_stops_key") or 0)
         
         return UnifiedFlight(
             airline=airline,
@@ -80,3 +79,103 @@ class TravelpayoutsProvider:
             currency=currency,
         )
         return [self._convert_ticket(t, currency) for t in tickets]
+
+
+class GoogleFlightsProvider:
+    CONSENT_COOKIE = "SOCS=CAISHAgBEhJnd3NfMjAyNDA5MjQtMF9SQzIaAmVuIAEaBgiA_L22Bg"
+
+    def _fetch_html(self, query) -> str:
+        import primp
+        import fast_flights.fetcher
+        client = primp.Client(
+            impersonate_os="windows",
+            referer=True,
+            cookie_store=True,
+        )
+        headers = {"cookie": self.CONSENT_COOKIE}
+        params = query.params() if hasattr(query, "params") else {"q": query}
+        resp = client.get(fast_flights.fetcher.URL, params=params, headers=headers)
+        resp.raise_for_status()
+        return resp.text
+
+    def _convert_result(self, raw_flights, currency: str) -> list[UnifiedFlight]:
+        results = []
+        for f in raw_flights:
+            price = float(getattr(f, "price", 0) or 0)
+            airlines = getattr(f, "airlines", []) or []
+            airline_name = " / ".join(airlines) if airlines else "Multiple Airlines"
+            
+            segments = getattr(f, "flights", []) or []
+            if not segments:
+                continue
+                
+            first_seg = segments[0]
+            dep_date = getattr(first_seg.departure, "date", [2026, 1, 1])
+            dep_time = getattr(first_seg.departure, "time", [0, 0])
+            depart_str = f"{dep_date[0]:04d}-{dep_date[1]:02d}-{dep_date[2]:02d} {dep_time[0]:02d}:{dep_time[1]:02d}"
+            
+            # Total duration in minutes
+            total_dur = sum(getattr(s, "duration", 0) or 0 for s in segments)
+            h = total_dur // 60
+            m = total_dur % 60
+            duration_str = f"{h}h {m:02d}m" if total_dur > 0 else "—"
+            
+            stops = max(0, len(segments) - 1)
+            layovers = [getattr(s.to_airport, "code", "") for s in segments[:-1]]
+            
+            results.append(
+                UnifiedFlight(
+                    airline=airline_name,
+                    flight_number="",
+                    price=price,
+                    currency=currency,
+                    depart_at=depart_str,
+                    return_at=None,
+                    duration=duration_str,
+                    stops=stops,
+                    layovers=layovers,
+                    source="Google Flights (Live)",
+                )
+            )
+        return results
+
+    def search(
+        self,
+        origin: str,
+        destination: str,
+        depart_date: str,
+        return_date: Optional[str] = None,
+        trip_type: str = "one-way",
+        currency: str = "DKK",
+    ) -> list[UnifiedFlight]:
+        from fast_flights import FlightQuery, create_filter
+        from fast_flights.parser import parse_js
+        from selectolax.lexbor import LexborHTMLParser
+
+        # Normalize date to YYYY-MM-DD
+        if len(depart_date) == 7:  # YYYY-MM
+            depart_date = f"{depart_date}-15"
+        if return_date and len(return_date) == 7:
+            return_date = f"{return_date}-15"
+
+        flight_queries = [FlightQuery(date=depart_date, from_airport=origin, to_airport=destination)]
+        if trip_type == "round-trip" and return_date:
+            flight_queries.append(FlightQuery(date=return_date, from_airport=destination, to_airport=origin))
+
+        q = create_filter(
+            flights=flight_queries,
+            trip=trip_type,
+            currency=currency,
+        )
+
+        html = self._fetch_html(q)
+        parser = LexborHTMLParser(html)
+        
+        # Locate the ds:1 data script
+        for script in parser.css("script"):
+            if script.attributes.get("class") == "ds:1":
+                parsed = parse_js(script.text())
+                return self._convert_result(parsed, currency)
+                
+        return []
+
