@@ -15,12 +15,13 @@ import asyncio
 import datetime
 import requests
 
+from dataclasses import asdict
 from dotenv import load_dotenv
 from mcp.server.mcpserver.server import MCPServer
 
 load_dotenv()
 
-# ── Re-use API functions from main.py ─────────────────────────────────────────
+# ── Re-use API functions from main.py & live_search ────────────────────────────
 sys.path.insert(0, os.path.dirname(__file__))
 from main import (
     fetch_cheap,
@@ -30,6 +31,7 @@ from main import (
     DEFAULT_CURRENCY,
     resolve_to_iata,
 )
+from live_search import search_flights as run_live_search, UnifiedFlight
 
 COMMON_AIRPORTS = [
     ("CPH", "Copenhagen Airport",                 "Copenhagen, Denmark"),
@@ -62,7 +64,7 @@ COMMON_AIRPORTS = [
 
 mcp = MCPServer(
     name="flight-search",
-    description="Search for cheap flights worldwide via Travelpayouts (free, no credit card).",
+    description="Search for live and cheap flights worldwide via Google Flights, Amadeus, and Travelpayouts.",
 )
 
 
@@ -70,76 +72,52 @@ mcp = MCPServer(
 def search_flights(
     origin: str,
     destination: str,
+    depart_date: str = "",
+    return_date: str = "",
     month: str = "",
     return_month: str = "",
     currency: str = "",
-) -> str:
+    trip_type: str = "auto",
+    source: str = "auto",
+) -> list[dict]:
     """
-    Search for the cheapest flights between two airports for a given month.
-    Returns cached prices from the last 48 hours.
-    Use for: 'find flights', 'cheap flights from X to Y', 'flight prices', 'search flights'.
+    Search for flights between two airports or cities.
+    Fetches live flight fares (via Google Flights or Amadeus) with automatic fallback to cached fares.
 
-    Accepts city names OR IATA codes — e.g. 'Copenhagen' or 'CPH', 'London' or 'LHR'.
+    Accepts city names OR IATA codes — e.g. 'Copenhagen' or 'CPH', 'Mumbai' or 'BOM'.
 
     Args:
-        origin: Origin city name or IATA code (e.g. 'Copenhagen', 'CPH', 'New York', 'JFK')
-        destination: Destination city name or IATA code (e.g. 'London', 'LHR', 'Paris', 'CDG')
-        month: Travel month YYYY-MM (e.g. 2026-09). Leave blank for any month.
-        return_month: Return month YYYY-MM for round-trip. Leave blank for one-way.
-        currency: ISO-4217 currency code (e.g. USD, EUR, DKK). Defaults to configured default.
+        origin: Origin city name or IATA code (e.g. 'Copenhagen', 'CPH')
+        destination: Destination city name or IATA code (e.g. 'Mumbai', 'BOM')
+        depart_date: Departure date YYYY-MM-DD or month YYYY-MM.
+        return_date: Return date YYYY-MM-DD or month YYYY-MM for round-trip.
+        month: Travel month YYYY-MM (alias for depart_date).
+        return_month: Return month YYYY-MM (alias for return_date).
+        currency: ISO-4217 currency code (e.g. DKK, USD, EUR, INR). Defaults to DKK.
+        trip_type: 'one-way', 'round-trip', or 'auto' (inferred from return_date).
+        source: 'auto' (live with cached fallback), 'live' (only live fares), or 'cached' (Travelpayouts 48h cache).
     """
-    token    = get_token()
     currency = (currency.strip().upper() or DEFAULT_CURRENCY)
+    depart = depart_date.strip() or month.strip() or None
+    ret = return_date.strip() or return_month.strip() or None
 
-    try:
-        origin_code, origin_name = resolve_to_iata(origin)
-        dest_code,   dest_name   = resolve_to_iata(destination)
-    except ValueError as e:
-        return f"❌ {e}"
+    if trip_type == "auto":
+        trip_type = "round-trip" if ret else "one-way"
 
-    resolved_note = ""
-    if origin_code != origin.strip().upper() or dest_code != destination.strip().upper():
-        resolved_note = f"📍 Resolved: {origin} → {origin_code} ({origin_name}), {destination} → {dest_code} ({dest_name})\n\n"
+    origin_code, origin_name = resolve_to_iata(origin)
+    dest_code, dest_name = resolve_to_iata(destination)
 
-    tickets = fetch_cheap(
-        token,
+    flights, actual_source = run_live_search(
         origin=origin_code,
         destination=dest_code,
-        depart_date=month or None,
-        return_date=return_month or None,
+        depart_date=depart,
+        return_date=ret,
+        trip_type=trip_type,
         currency=currency,
+        source=source or "auto",
     )
 
-    if not tickets:
-        return (
-            resolved_note +
-            f"No flights found for {origin_code} → {dest_code}"
-            + (f" in {month}" if month else "") + ".\n"
-            "Try a different month or leave month blank for any-month results."
-        )
-
-    tickets = sorted(tickets, key=lambda t: float(t.get("price", 0) or t.get("value", 0)))
-
-    lines = [resolved_note + f"✈  {origin_code} ({origin_name}) → {dest_code} ({dest_name})" + (f"  [{month}]" if month else "") + "\n"]
-    for i, t in enumerate(tickets, 1):
-        price     = t.get("price") or t.get("value", "?")
-        airline   = t.get("airline", "—")
-        depart    = (t.get("departure_at") or t.get("depart_date") or "")[:10] or "—"
-        ret       = (t.get("return_at") or t.get("return_date") or "")[:10] or "—"
-        transfers = t.get("transfers", t.get("number_of_changes", 0))
-        stops     = "Nonstop" if transfers == 0 else f"{transfers} stop(s)"
-        dur_raw   = t.get("duration", t.get("duration_to", 0)) or 0
-        if dur_raw:
-            h, m = divmod(int(dur_raw), 60)
-            dur = f"{h}h {m:02d}m" if h else f"{m}m"
-        else:
-            dur = "—"
-        lines.append(
-            f"{i}. {currency} {float(price):,.0f}  |  {airline}  |  {depart} → {ret}  |  {stops}  |  {dur}"
-        )
-
-    lines.append(f"\nShowing {len(tickets)} fare(s). Prices cached from last 48h.")
-    return "\n".join(lines)
+    return [asdict(f) for f in flights]
 
 
 @mcp.tool()
