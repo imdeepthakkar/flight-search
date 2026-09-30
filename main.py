@@ -27,8 +27,9 @@ from rich.align import Align
 from rich.rule import Rule
 from rich.live import Live
 from rich.spinner import Spinner
-from rich.padding import Padding
 from dotenv import load_dotenv
+
+from live_search import search_flights, UnifiedFlight
 
 load_dotenv()
 
@@ -341,6 +342,91 @@ def print_results_table(tickets: list[dict], currency: str, origin: str, destina
                   "Prices are cached from the last 48 hours of user searches.[/dim]\n")
 
 
+def print_unified_results_table(flights: list, currency: str, origin: str, dest: str, source_used: str):
+    s_lower = source_used.lower()
+    if "google" in s_lower:
+        badge = "[bold green][LIVE FARES (Google Flights)][/bold green]"
+    elif "amadeus" in s_lower:
+        badge = "[bold green][LIVE FARES (Amadeus)][/bold green]"
+    elif "cached" in s_lower or "travelpayouts" in s_lower:
+        badge = "[bold yellow][CACHED FARES (Travelpayouts)][/bold yellow]"
+    elif "live" in s_lower and "no results" not in s_lower:
+        badge = f"[bold green][LIVE FARES ({source_used})][/bold green]"
+    else:
+        badge = f"[bold cyan][{source_used}][/bold cyan]"
+
+    if not flights:
+        console.print(
+            f"[yellow]  No flights found for {origin} -> {dest}.\n"
+            f"  Source: {badge}\n"
+            f"  Try a different date or source.[/yellow]\n"
+        )
+        return
+
+    # Sort by price
+    flights = sorted(
+        flights,
+        key=lambda f: float(f.price if hasattr(f, "price") else (f.get("price") or f.get("value") or 0))
+    )
+
+    table = Table(
+        box=box.ROUNDED,
+        border_style="cyan",
+        show_lines=True,
+        title=f"[bold cyan]{origin} -> {dest}[/bold cyan]  {badge}",
+        title_style="bold",
+    )
+    table.add_column("#", style="dim", width=3)
+    table.add_column("Price", style="bold green", min_width=12)
+    table.add_column("Airline", style="bold", min_width=10)
+    table.add_column("Depart", style="cyan", min_width=12)
+    table.add_column("Return", style="magenta", min_width=12)
+    table.add_column("Duration", style="yellow", width=10)
+    table.add_column("Stops", min_width=10)
+
+    for i, f in enumerate(flights, 1):
+        if hasattr(f, "price"):
+            price = f.price
+            airline = f.airline or "—"
+            depart = fmt_date(f.depart_at) if f.depart_at else "—"
+            ret = fmt_date(f.return_at) if f.return_at else "[dim]—[/dim]"
+            dur_str = f.duration or "—"
+            stops_count = f.stops
+            layovers = getattr(f, "layovers", [])
+        else:
+            price = f.get("price") or f.get("value", 0)
+            airline = f.get("airline", "—")
+            depart = fmt_date(f.get("departure_at", f.get("depart_date", "")))
+            ret = fmt_date(f.get("return_at", f.get("return_date", "")))
+            dur_raw = f.get("duration", f.get("duration_to", 0)) or 0
+            if dur_raw:
+                h, m = divmod(int(dur_raw), 60)
+                dur_str = f"{h}h {m:02d}m" if h else f"{m}m"
+            else:
+                dur_str = "—"
+            stops_count = f.get("transfers", f.get("number_of_changes", 0))
+            layovers = []
+
+        stops_str = fmt_stops(stops_count)
+        if layovers:
+            stops_str += f" [dim]({', '.join(layovers)})[/dim]"
+
+        table.add_row(
+            str(i),
+            fmt_price(price, currency),
+            airline,
+            depart,
+            ret if ret and ret != "—" else "[dim]—[/dim]",
+            dur_str,
+            stops_str,
+        )
+
+    console.print()
+    console.print(Align.center(table))
+    console.print()
+    console.print(f"  [dim]Showing [bold]{len(flights)}[/bold] fares. Source: {badge}[/dim]\n")
+
+
 def print_calendar(tickets: list[dict], currency: str, origin: str,
                    destination: str, month: str):
     """Print a mini day-price calendar view."""
@@ -392,52 +478,58 @@ def search(
         help="Origin IATA code (e.g. JFK)"),
     to_airport:   Optional[str] = typer.Option(None, "--to",   "-t",
         help="Destination IATA code (e.g. LHR)"),
-    date:         Optional[str] = typer.Option(None, "--date", "-d",
-        help="Month to search (YYYY-MM). Leave blank for any month."),
+    depart:       Optional[str] = typer.Option(None, "--depart", "-d",
+        help="Departure date (YYYY-MM-DD or YYYY-MM)"),
     return_date:  Optional[str] = typer.Option(None, "--return", "-r",
-        help="Return month for round-trip (YYYY-MM)."),
+        help="Return date (YYYY-MM-DD or YYYY-MM)"),
+    date:         Optional[str] = typer.Option(None, "--date",
+        help="Departure date (YYYY-MM-DD or YYYY-MM) [alias for --depart]"),
     trip:         str           = typer.Option("one-way",  "--trip",
         help="one-way / round-trip"),
     currency:     str           = typer.Option(None, "--currency", "-c",
         help=f"Currency code (USD, EUR, GBP, DKK…). Default: {DEFAULT_CURRENCY} (set TRAVELPAYOUTS_CURRENCY in .env to change)."),
+    source:       str           = typer.Option("auto", "--source", "-s",
+        help="auto | live | cached"),
     interactive:  bool          = typer.Option(False, "--interactive", "-i",
         is_flag=True, help="Guided prompt mode"),
 ):
     """
-    [bold cyan]Search cheapest flights via Travelpayouts (100% free, no credit card).[/bold cyan]
+    [bold cyan]Search flights with live pricing and cached fallbacks.[/bold cyan]
 
-    Shows the cheapest fares found in the last 48 hours for a given route.
-    Dates use YYYY-MM format (month-level granularity).
+    Supports live fares (Google Flights, Amadeus) and cached fares (Travelpayouts).
+    Dates support exact day (YYYY-MM-DD) or month (YYYY-MM).
 
     [dim]Examples:[/dim]
 
-      [green]python main.py search --from JFK --to LHR --date 2026-09[/green]
+      [green]python main.py search --from JFK --to LHR --depart 2026-10-15[/green]
 
-      [green]python main.py search --from BOM --to DEL --date 2026-10 --currency INR[/green]
+      [green]python main.py search --from BOM --to DEL --depart 2026-10 --currency INR --source live[/green]
 
       [green]python main.py search -i[/green]
     """
     print_banner()
     currency = (currency or DEFAULT_CURRENCY).strip().upper()
+    target_depart = depart or date
 
     # ── Interactive ───────────────────────────────────────────────────────────
     if interactive or not from_airport:
         console.print("[bold]  Let's find your flight![/bold]\n")
         from_airport = (Prompt.ask("  [cyan]From[/cyan] airport (IATA)", default=from_airport or "")).upper()
         to_airport   = (Prompt.ask("  [cyan]To[/cyan] airport (IATA)",   default=to_airport   or "")).upper()
-        default_month = (datetime.date.today() + datetime.timedelta(days=30)).strftime("%Y-%m")
-        date = Prompt.ask(
-            "  [cyan]Month[/cyan] (YYYY-MM, or leave blank for any)",
-            default=date or default_month,
+        default_month = (datetime.date.today() + datetime.timedelta(days=30)).strftime("%Y-%m-%d")
+        target_depart = Prompt.ask(
+            "  [cyan]Departure date[/cyan] (YYYY-MM-DD or YYYY-MM, or leave blank for any)",
+            default=target_depart or default_month,
         )
         trip = Prompt.ask("  [cyan]Trip type[/cyan]", choices=TRIP_CHOICES, default=trip)
         if trip == "round-trip":
-            default_ret = (datetime.date.today() + datetime.timedelta(days=37)).strftime("%Y-%m")
+            default_ret = (datetime.date.today() + datetime.timedelta(days=37)).strftime("%Y-%m-%d")
             return_date = Prompt.ask(
-                "  [cyan]Return month[/cyan] (YYYY-MM)",
+                "  [cyan]Return date[/cyan] (YYYY-MM-DD or YYYY-MM)",
                 default=return_date or default_ret,
             )
         currency = Prompt.ask("  [cyan]Currency[/cyan]", default=currency or DEFAULT_CURRENCY)
+        source = Prompt.ask("  [cyan]Source[/cyan] (auto/live/cached)", default=source or "auto")
         console.print()
 
     # ── Validate ──────────────────────────────────────────────────────────────
@@ -447,8 +539,6 @@ def search(
 
     from_airport = from_airport.strip()
     to_airport   = to_airport.strip()
-
-    token = get_token()
 
     with Live(
         Spinner("dots", text="  Resolving locations…", style="cyan"),
@@ -467,7 +557,7 @@ def search(
         Panel(
             f"[bold]{from_code}[/bold] ({from_name}) [cyan]->[/cyan] [bold]{to_code}[/bold] ({to_name})"
             + (f" [cyan]->[/cyan] [bold]{from_code}[/bold]" if trip == "round-trip" else "")
-            + (f"   [dim]{date}[/dim]" if date else "  [dim]any month[/dim]"),
+            + (f"   [dim]{target_depart}[/dim]" if target_depart else "  [dim]any date[/dim]"),
             border_style="cyan",
             padding=(0, 2),
         )
@@ -475,19 +565,20 @@ def search(
     console.print()
 
     with Live(
-        Spinner("dots", text="  Fetching from Travelpayouts…", style="cyan"),
+        Spinner("dots", text="  Searching flights…", style="cyan"),
         refresh_per_second=10,
         console=console,
         transient=True,
     ):
         try:
-            tickets = fetch_cheap(
-                token,
+            flights, source_used = search_flights(
                 origin=from_code,
                 destination=to_code,
-                depart_date=date or None,
+                depart_date=target_depart or None,
                 return_date=return_date if trip == "round-trip" else None,
+                trip_type=trip,
                 currency=currency,
+                source=source,
             )
         except requests.HTTPError as e:
             console.print(f"\n[bold red]  HTTP error:[/bold red] {e}")
@@ -496,7 +587,7 @@ def search(
             console.print(f"\n[bold red]  Error:[/bold red] {e}")
             raise typer.Exit(1)
 
-    print_results_table(tickets, currency, from_code, to_code)
+    print_unified_results_table(flights, currency, from_code, to_code, source_used)
 
 
 @app.command()
