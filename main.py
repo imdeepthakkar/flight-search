@@ -553,6 +553,9 @@ def search(
             console.print(f"\n[bold red]  Location Error:[/bold red] {e}")
             raise typer.Exit(1)
 
+    if return_date and trip == "one-way":
+        trip = "round-trip"
+
     console.print(
         Panel(
             f"[bold]{from_code}[/bold] ({from_name}) [cyan]->[/cyan] [bold]{to_code}[/bold] ({to_name})"
