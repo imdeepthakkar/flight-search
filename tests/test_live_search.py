@@ -1,6 +1,6 @@
 import unittest
 from unittest.mock import patch, MagicMock
-from live_search import UnifiedFlight, TravelpayoutsProvider, GoogleFlightsProvider, AmadeusProvider
+from live_search import UnifiedFlight, TravelpayoutsProvider, GoogleFlightsProvider, AmadeusProvider, search_flights
 
 class TestTravelpayoutsAdapter(unittest.TestCase):
     def test_unified_flight_fields(self):
@@ -273,6 +273,115 @@ class TestAmadeusProvider(unittest.TestCase):
         self.assertEqual(flight.currency, "EUR")
         self.assertEqual(flight.depart_at, "2026-12-01 08:00")
         self.assertEqual(flight.return_at, "2026-12-10 14:00")
+
+
+class TestOrchestrator(unittest.TestCase):
+    @patch("live_search.GoogleFlightsProvider.search")
+    def test_orchestrator_live_success(self, mock_google):
+        mock_google.return_value = [
+            UnifiedFlight(
+                airline="Emirates",
+                flight_number="",
+                price=5000.0,
+                currency="DKK",
+                depart_at="2026-12-16 10:00",
+                return_at=None,
+                duration="10h",
+                stops=1,
+                source="Google Flights (Live)",
+            )
+        ]
+        flights, src = search_flights("CPH", "BOM", "2026-12-16", source="auto")
+        self.assertEqual(len(flights), 1)
+        self.assertEqual(src, "Google Flights (Live)")
+
+    @patch("live_search.GoogleFlightsProvider.search", side_effect=Exception("Scraper blocked"))
+    @patch("live_search.TravelpayoutsProvider.search")
+    def test_orchestrator_fallback_to_cache(self, mock_cached, mock_google):
+        mock_cached.return_value = [
+            UnifiedFlight(
+                airline="SK",
+                flight_number="",
+                price=3686.0,
+                currency="DKK",
+                depart_at="2026-11-20 10:00",
+                return_at=None,
+                duration="18h",
+                stops=0,
+                source="Travelpayouts (Cached)",
+            )
+        ]
+        flights, src = search_flights("CPH", "BOM", "2026-12-16", source="auto")
+        self.assertEqual(len(flights), 1)
+        self.assertEqual(src, "Travelpayouts (Cached)")
+
+    @patch("live_search.TravelpayoutsProvider.search")
+    def test_orchestrator_source_cached(self, mock_cached):
+        mock_cached.return_value = [
+            UnifiedFlight(
+                airline="SK",
+                flight_number="",
+                price=2000.0,
+                currency="DKK",
+                depart_at="2026-11-20 10:00",
+                return_at=None,
+                duration="2h",
+                stops=0,
+                source="Travelpayouts (Cached)",
+            )
+        ]
+        flights, src = search_flights("CPH", "LHR", "2026-11-20", source="cached")
+        self.assertEqual(len(flights), 1)
+        self.assertEqual(src, "Travelpayouts (Cached)")
+        mock_cached.assert_called_once_with("CPH", "LHR", "2026-11-20", None, "DKK")
+
+    @patch("live_search.GoogleFlightsProvider.search", side_effect=Exception("Timeout"))
+    def test_orchestrator_source_live_failure(self, mock_google):
+        flights, src = search_flights("CPH", "BOM", "2026-12-16", source="live")
+        self.assertEqual(flights, [])
+        self.assertEqual(src, "Live Search (No results found)")
+
+    @patch("live_search.AmadeusProvider.is_configured", return_value=True)
+    @patch("live_search.AmadeusProvider.search")
+    def test_orchestrator_amadeus_priority(self, mock_amadeus_search, mock_is_conf):
+        mock_amadeus_search.return_value = [
+            UnifiedFlight(
+                airline="LH",
+                flight_number="LH820",
+                price=4000.0,
+                currency="DKK",
+                depart_at="2026-12-16 06:00",
+                return_at=None,
+                duration="14h",
+                stops=1,
+                source="Amadeus (Live)",
+            )
+        ]
+        flights, src = search_flights("CPH", "BOM", "2026-12-16", source="auto")
+        self.assertEqual(len(flights), 1)
+        self.assertEqual(src, "Amadeus (Live)")
+        mock_amadeus_search.assert_called_once_with("CPH", "BOM", "2026-12-16", None, "DKK")
+
+    @patch("live_search.AmadeusProvider.is_configured", return_value=True)
+    @patch("live_search.AmadeusProvider.search", side_effect=Exception("API Error"))
+    @patch("live_search.GoogleFlightsProvider.search")
+    def test_orchestrator_amadeus_failure_falls_to_google(self, mock_google, mock_amadeus_search, mock_is_conf):
+        mock_google.return_value = [
+            UnifiedFlight(
+                airline="Emirates",
+                flight_number="",
+                price=5000.0,
+                currency="DKK",
+                depart_at="2026-12-16 10:00",
+                return_at=None,
+                duration="10h",
+                stops=1,
+                source="Google Flights (Live)",
+            )
+        ]
+        flights, src = search_flights("CPH", "BOM", "2026-12-16", source="auto")
+        self.assertEqual(len(flights), 1)
+        self.assertEqual(src, "Google Flights (Live)")
 
 
 if __name__ == "__main__":

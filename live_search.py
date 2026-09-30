@@ -280,3 +280,55 @@ class AmadeusProvider:
             raise RuntimeError(f"Amadeus search failed: {e}")
 
 
+def search_flights(
+    origin: str,
+    destination: str,
+    depart_date: Optional[str] = None,
+    return_date: Optional[str] = None,
+    trip_type: str = "one-way",
+    currency: str = "DKK",
+    source: str = "auto",
+) -> tuple[list[UnifiedFlight], str]:
+    """
+    Search flights with live search priority and automatic fallback to Travelpayouts cache.
+    Source can be 'auto', 'live', or 'cached'.
+    Returns (list_of_unified_flights, actual_source_used).
+    """
+    source = (source or "auto").lower()
+
+    # Force cached if explicitly requested
+    if source == "cached":
+        tp = TravelpayoutsProvider()
+        return tp.search(origin, destination, depart_date, return_date, currency), "Travelpayouts (Cached)"
+
+    # Live Attempt 1: Amadeus (if configured)
+    amadeus = AmadeusProvider()
+    if amadeus.is_configured() and depart_date:
+        try:
+            results = amadeus.search(origin, destination, depart_date, return_date, currency)
+            if results:
+                return results, "Amadeus (Live)"
+        except Exception:
+            pass  # Fall through to Google Flights
+
+    # Live Attempt 2: Google Flights (zero-config)
+    if depart_date:
+        try:
+            gf = GoogleFlightsProvider()
+            results = gf.search(origin, destination, depart_date, return_date, trip_type, currency)
+            if results:
+                return results, "Google Flights (Live)"
+        except Exception:
+            pass  # Fall through to cached
+
+    # If source was explicitly 'live' and we got no results
+    if source == "live":
+        return [], "Live Search (No results found)"
+
+    # Fallback: Travelpayouts cached
+    tp = TravelpayoutsProvider()
+    cached_results = tp.search(origin, destination, depart_date, return_date, currency)
+    return cached_results, "Travelpayouts (Cached)"
+
+
+
