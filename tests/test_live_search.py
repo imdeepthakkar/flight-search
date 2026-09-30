@@ -120,6 +120,31 @@ class TestGoogleFlightsProvider(unittest.TestCase):
         flights = provider.search("CPH", "LHR", "2026-11-15", trip_type="one-way", currency="DKK")
         self.assertEqual(flights, [])
 
+    @patch("fast_flights.parser.parse_js")
+    @patch("live_search.GoogleFlightsProvider._fetch_html")
+    def test_search_returns_empty_on_flights_not_found(self, mock_fetch, mock_parse_js):
+        from fast_flights.exceptions import FlightsNotFound
+        mock_fetch.return_value = '<html><body><script class="ds:1">AF_initDataCallback({});</script></body></html>'
+        mock_parse_js.side_effect = FlightsNotFound("No flights found")
+        provider = GoogleFlightsProvider()
+        flights = provider.search("CPH", "XYZ", "2026-11-15", trip_type="one-way", currency="DKK")
+        self.assertEqual(flights, [])
+
+    def test_convert_result_with_none_departure_date_or_time(self):
+        fake_flight = MagicMock()
+        fake_flight.price = 1000
+        fake_flight.airlines = ["SAS"]
+        seg = MagicMock()
+        seg.departure.date = None
+        seg.departure.time = None
+        seg.duration = 60
+        fake_flight.flights = [seg]
+
+        provider = GoogleFlightsProvider()
+        flights = provider._convert_result([fake_flight], "DKK")
+        self.assertEqual(len(flights), 1)
+        self.assertEqual(flights[0].depart_at, "2026-01-01 00:00")
+
 
 if __name__ == "__main__":
     unittest.main()

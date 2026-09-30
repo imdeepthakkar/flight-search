@@ -110,8 +110,8 @@ class GoogleFlightsProvider:
                 continue
                 
             first_seg = segments[0]
-            dep_date = getattr(first_seg.departure, "date", [2026, 1, 1])
-            dep_time = getattr(first_seg.departure, "time", [0, 0])
+            dep_date = getattr(first_seg.departure, "date", None) or [2026, 1, 1]
+            dep_time = getattr(first_seg.departure, "time", None) or [0, 0]
             depart_str = f"{dep_date[0]:04d}-{dep_date[1]:02d}-{dep_date[2]:02d} {dep_time[0]:02d}:{dep_time[1]:02d}"
             
             # Total duration in minutes
@@ -174,8 +174,12 @@ class GoogleFlightsProvider:
         # Locate the ds:1 data script
         for script in parser.css("script"):
             if script.attributes.get("class") == "ds:1":
-                parsed = parse_js(script.text())
-                return self._convert_result(parsed, currency)
+                try:
+                    from fast_flights.exceptions import FlightsNotFound
+                    parsed = parse_js(script.text())
+                    return self._convert_result(parsed, currency)
+                except (FlightsNotFound, Exception):
+                    return []
                 
         return []
 
