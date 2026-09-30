@@ -366,7 +366,7 @@ def print_unified_results_table(flights: list, currency: str, origin: str, dest:
     # Sort by price
     flights = sorted(
         flights,
-        key=lambda f: float(f.price if hasattr(f, "price") else (f.get("price") or f.get("value") or 0))
+        key=lambda f: float(getattr(f, "price", 0) or (f.get("price") if isinstance(f, dict) else 0) or 0)
     )
 
     table = Table(
@@ -516,10 +516,10 @@ def search(
         console.print("[bold]  Let's find your flight![/bold]\n")
         from_airport = (Prompt.ask("  [cyan]From[/cyan] airport (IATA)", default=from_airport or "")).upper()
         to_airport   = (Prompt.ask("  [cyan]To[/cyan] airport (IATA)",   default=to_airport   or "")).upper()
-        default_month = (datetime.date.today() + datetime.timedelta(days=30)).strftime("%Y-%m-%d")
+        default_depart = (datetime.date.today() + datetime.timedelta(days=30)).strftime("%Y-%m-%d")
         target_depart = Prompt.ask(
             "  [cyan]Departure date[/cyan] (YYYY-MM-DD or YYYY-MM, or leave blank for any)",
-            default=target_depart or default_month,
+            default=target_depart or default_depart,
         )
         trip = Prompt.ask("  [cyan]Trip type[/cyan]", choices=TRIP_CHOICES, default=trip)
         if trip == "round-trip":

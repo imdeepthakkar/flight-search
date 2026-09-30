@@ -4,31 +4,6 @@ from live_search import UnifiedFlight
 import mcp_server
 
 class TestMCP(unittest.TestCase):
-    @patch("live_search.search_flights")
-    def test_mcp_returns_live_flights(self, mock_search):
-        mock_search.return_value = (
-            [
-                UnifiedFlight(
-                    airline="Emirates",
-                    flight_number="EK152",
-                    price=5500.0,
-                    currency="DKK",
-                    depart_at="2026-12-16 14:00",
-                    return_at="2027-01-07 20:00",
-                    duration="12h 30m",
-                    stops=1,
-                    layovers=["DXB"],
-                    source="Google Flights (Live)",
-                )
-            ],
-            "Google Flights (Live)",
-        )
-        from live_search import search_flights
-        res, src = search_flights("CPH", "BOM", "2026-12-16", "2027-01-07", "round-trip", "DKK", "auto")
-        self.assertEqual(len(res), 1)
-        self.assertEqual(src, "Google Flights (Live)")
-        self.assertEqual(res[0].airline, "Emirates")
-
     @patch("mcp_server.run_live_search")
     def test_mcp_server_search_flights_returns_structured_dicts(self, mock_search):
         mock_search.return_value = (

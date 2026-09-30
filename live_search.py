@@ -3,6 +3,7 @@ live_search.py -- Unified flight search engine supporting Google Flights,
 Amadeus GDS, and Travelpayouts cached fallback.
 """
 
+import json
 import os
 import re
 from dataclasses import dataclass, field
@@ -83,6 +84,156 @@ class TravelpayoutsProvider:
         return [self._convert_ticket(t, currency) for t in tickets]
 
 
+def safe_parse_google_flights_js(
+    js: str, currency: str, return_date: Optional[str] = None
+) -> list[UnifiedFlight]:
+    """
+    Safely parse Google Flights ds:1 javascript payload directly.
+    Resilient to unpriced flights, missing fields, or empty data.
+    """
+    if not js:
+        return []
+
+    if "errorHasStatus: true" in js:
+        return []
+
+    payload = None
+    if "data:" in js:
+        try:
+            after_data = js.split("data:", 1)[1].strip()
+            # Standard Google Flights format with trailing comma (e.g. data:[...], sideChannel: {})
+            candidate = after_data.rsplit(",", 1)[0].strip()
+            try:
+                payload = json.loads(candidate)
+            except Exception:
+                try:
+                    payload, _ = json.JSONDecoder().raw_decode(after_data)
+                except Exception:
+                    payload = json.loads(after_data)
+        except Exception:
+            return []
+    else:
+        try:
+            payload = json.loads(js.strip())
+        except Exception:
+            try:
+                payload, _ = json.JSONDecoder().raw_decode(js.strip())
+            except Exception:
+                return []
+
+    try:
+        if isinstance(payload, list) and len(payload) > 3 and payload[3] and isinstance(payload[3], list):
+            flights_data = payload[3][0]
+        elif isinstance(payload, dict) and "3" in payload:
+            flights_data = payload["3"][0]
+        else:
+            return []
+    except (IndexError, TypeError):
+        return []
+
+    if not flights_data or not isinstance(flights_data, list):
+        return []
+
+    results: list[UnifiedFlight] = []
+    for k in flights_data:
+        if not isinstance(k, (list, tuple)) or not k:
+            continue
+        flight = k[0]
+        if not isinstance(flight, (list, tuple)):
+            continue
+
+        # Extract price safely (if k[1] and k[1][0] and len >= 2, else 0.0)
+        price = 0.0
+        try:
+            if len(k) > 1 and k[1] and isinstance(k[1], (list, tuple)) and len(k[1]) > 0:
+                first_p = k[1][0]
+                if isinstance(first_p, (list, tuple)) and len(first_p) >= 2 and first_p[1] is not None:
+                    price = float(first_p[1])
+        except (IndexError, TypeError, ValueError):
+            price = 0.0
+
+        # Extract airline names from flight[1]
+        airlines = []
+        try:
+            if len(flight) > 1 and flight[1]:
+                if isinstance(flight[1], list):
+                    airlines = [str(a) for a in flight[1] if a]
+                elif isinstance(flight[1], str):
+                    airlines = [flight[1]]
+        except Exception:
+            pass
+        airline_name = " / ".join(airlines) if airlines else "Multiple Airlines"
+
+        # Extract single_flight segments from flight[2]
+        segments = []
+        try:
+            if len(flight) > 2 and flight[2] and isinstance(flight[2], list):
+                segments = flight[2]
+        except Exception:
+            pass
+
+        if not segments:
+            continue
+
+        first_seg = segments[0]
+        depart_str = ""
+        try:
+            dep_date = first_seg[20] if len(first_seg) > 20 else None
+            dep_time = first_seg[8] if len(first_seg) > 8 else None
+            if isinstance(dep_date, (list, tuple)) and len(dep_date) >= 3 and isinstance(dep_time, (list, tuple)) and len(dep_time) >= 2:
+                depart_str = f"{int(dep_date[0]):04d}-{int(dep_date[1]):02d}-{int(dep_date[2]):02d} {int(dep_time[0]):02d}:{int(dep_time[1]):02d}"
+            elif isinstance(dep_date, (list, tuple)) and len(dep_date) >= 3:
+                depart_str = f"{int(dep_date[0]):04d}-{int(dep_date[1]):02d}-{int(dep_date[2]):02d} 00:00"
+            elif isinstance(dep_date, str):
+                depart_str = dep_date
+        except Exception:
+            depart_str = ""
+
+        # Total duration in minutes
+        total_dur = 0
+        for seg in segments:
+            try:
+                if len(seg) > 11 and seg[11] is not None:
+                    total_dur += int(seg[11])
+            except (IndexError, TypeError, ValueError):
+                pass
+
+        if total_dur > 0:
+            h = total_dur // 60
+            m = total_dur % 60
+            duration_str = f"{h}h {m:02d}m"
+        else:
+            duration_str = "—"
+
+        stops = max(0, len(segments) - 1)
+        layovers = []
+        for seg in segments[:-1]:
+            try:
+                if len(seg) > 6 and seg[6]:
+                    layovers.append(str(seg[6]))
+            except (IndexError, TypeError):
+                pass
+
+        return_at = return_date if return_date else None
+
+        results.append(
+            UnifiedFlight(
+                airline=airline_name,
+                flight_number="",
+                price=price,
+                currency=currency,
+                depart_at=depart_str,
+                return_at=return_at,
+                duration=duration_str,
+                stops=stops,
+                layovers=layovers,
+                source="Google Flights (Live)",
+            )
+        )
+
+    return results
+
+
 class GoogleFlightsProvider:
     CONSENT_COOKIE = "SOCS=CAISHAgBEhJnd3NfMjAyNDA5MjQtMF9SQzIaAmVuIAEaBgiA_L22Bg"
 
@@ -100,7 +251,7 @@ class GoogleFlightsProvider:
         resp.raise_for_status()
         return resp.text
 
-    def _convert_result(self, raw_flights, currency: str) -> list[UnifiedFlight]:
+    def _convert_result(self, raw_flights, currency: str, return_date: Optional[str] = None) -> list[UnifiedFlight]:
         results = []
         for f in raw_flights:
             price = float(getattr(f, "price", 0) or 0)
@@ -132,7 +283,7 @@ class GoogleFlightsProvider:
                     price=price,
                     currency=currency,
                     depart_at=depart_str,
-                    return_at=None,
+                    return_at=return_date,
                     duration=duration_str,
                     stops=stops,
                     layovers=layovers,
@@ -151,7 +302,6 @@ class GoogleFlightsProvider:
         currency: str = "DKK",
     ) -> list[UnifiedFlight]:
         from fast_flights import FlightQuery, create_filter
-        from fast_flights.parser import parse_js
         from selectolax.lexbor import LexborHTMLParser
 
         # Normalize date to YYYY-MM-DD
@@ -177,10 +327,12 @@ class GoogleFlightsProvider:
         for script in parser.css("script"):
             if script.attributes.get("class") == "ds:1":
                 try:
-                    from fast_flights.exceptions import FlightsNotFound
-                    parsed = parse_js(script.text())
-                    return self._convert_result(parsed, currency)
-                except (FlightsNotFound, Exception):
+                    return safe_parse_google_flights_js(
+                        script.text(),
+                        currency=currency,
+                        return_date=return_date if trip_type == "round-trip" else None,
+                    )
+                except Exception:
                     return []
                 
         return []
